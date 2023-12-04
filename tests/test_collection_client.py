@@ -3,7 +3,7 @@ import pytest
 from pystac_client import CollectionClient
 from pystac_client.client import Client
 
-from .helpers import STAC_URLS
+from tests.helpers import STAC_URLS
 
 
 class TestCollectionClient:

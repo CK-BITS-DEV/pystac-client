@@ -12,7 +12,7 @@ from pytest_benchmark.fixture import BenchmarkFixture
 from pystac_client import Client
 from pystac_client.item_search import ItemSearch
 
-from .helpers import STAC_URLS, read_data_file
+from tests.helpers import STAC_URLS, read_data_file
 
 SEARCH_URL = f"{STAC_URLS['PLANETARY-COMPUTER']}/search"
 INTERSECTS_EXAMPLE = {
