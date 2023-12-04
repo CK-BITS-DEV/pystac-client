@@ -1,8 +1,18 @@
 import json
 import logging
-import re
+import warnings
 from copy import deepcopy
-from typing import TYPE_CHECKING, Any, Callable, Dict, Iterator, List, Optional, Union
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    Callable,
+    Dict,
+    Iterator,
+    List,
+    Optional,
+    Tuple,
+    Union,
+)
 from urllib.parse import urlparse
 
 import pystac
@@ -15,10 +25,11 @@ from pystac.serialization import (
 )
 from pystac.stac_io import DefaultStacIO
 from requests import Request, Session
+from requests.adapters import HTTPAdapter
+from urllib3 import Retry
 
 import pystac_client
 
-from .conformance import CONFORMANCE_URIS, ConformanceClasses
 from .exceptions import APIError
 
 if TYPE_CHECKING:
@@ -28,6 +39,9 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+Timeout = Union[float, Tuple[float, float], Tuple[float, None]]
+
+
 class StacApiIO(DefaultStacIO):
     def __init__(
         self,
@@ -35,31 +49,81 @@ class StacApiIO(DefaultStacIO):
         conformance: Optional[List[str]] = None,
         parameters: Optional[Dict[str, Any]] = None,
         request_modifier: Optional[Callable[[Request], Union[Request, None]]] = None,
+        timeout: Optional[Timeout] = None,
+        max_retries: Optional[Union[int, Retry]] = 5,
     ):
         """Initialize class for API IO
 
         Args:
             headers : Optional dictionary of headers to include in all requests
-            conformance : Optional list of `Conformance Classes
+            conformance (DEPRECATED) : Optional list of `Conformance Classes
                 <https://github.com/radiantearth/stac-api-spec/blob/master/overview.md#conformance-classes>`__.
+
+                .. deprecated:: 0.7.0
+                    Conformance can be altered on the client class directly
+
             parameters: Optional dictionary of query string parameters to
               include in all requests.
             request_modifier: Optional callable that can be used to modify Request
               objects before they are sent. If provided, the callable receives a
               `request.Request` and must either modify the object directly or return
               a new / modified request instance.
+            timeout: Optional float or (float, float) tuple following the semantics
+              defined by `Requests
+              <https://requests.readthedocs.io/en/latest/api/#main-interface>`__.
+            max_retries: The number of times to retry requests. Set to ``None`` to
+              disable retries.
 
         Return:
             StacApiIO : StacApiIO instance
         """
         # TODO - this should super() to parent class
+
+        if conformance is not None:
+            warnings.warn(
+                (
+                    "The `conformance` option is deprecated and will be "
+                    "removed in the next major release. Instead use "
+                    "`Client.set_conforms_to` or `Client.add_conforms_to` to control "
+                    "behavior."
+                ),
+                category=FutureWarning,
+            )
+
         self.session = Session()
+        if max_retries:
+            self.session.mount("http://", HTTPAdapter(max_retries=max_retries))
+            self.session.mount("https://", HTTPAdapter(max_retries=max_retries))
+        self.timeout = timeout
+        self.update(
+            headers=headers, parameters=parameters, request_modifier=request_modifier
+        )
+
+    def update(
+        self,
+        headers: Optional[Dict[str, str]] = None,
+        parameters: Optional[Dict[str, Any]] = None,
+        request_modifier: Optional[Callable[[Request], Union[Request, None]]] = None,
+        timeout: Optional[Timeout] = None,
+    ) -> None:
+        """Updates this StacApi's headers, parameters, and/or request_modifer.
+
+        Args:
+            headers : Optional dictionary of headers to include in all requests
+            parameters: Optional dictionary of query string parameters to
+              include in all requests.
+            request_modifier: Optional callable that can be used to modify Request
+              objects before they are sent. If provided, the callable receives a
+              `request.Request` and must either modify the object directly or return
+              a new / modified request instance.
+            timeout: Optional float or (float, float) tuple following the semantics
+              defined by `Requests
+              <https://requests.readthedocs.io/en/latest/api/#main-interface>`__.
+        """
         self.session.headers.update(headers or {})
         self.session.params.update(parameters or {})  # type: ignore
-
-        self._conformance = conformance
-
         self._req_modifier = request_modifier
+        self.timeout = timeout
 
     def read_text(self, source: pystac.link.HREF, *args: Any, **kwargs: Any) -> str:
         """Read text from the given URI.
@@ -100,7 +164,7 @@ class StacApiIO(DefaultStacIO):
             )
         else:  # str or something that can be str'ed
             href = str(source)
-            if bool(urlparse(href).scheme):
+            if _is_url(href):
                 return self.request(href, *args, **kwargs)
             else:
                 with open(href) as f:
@@ -135,8 +199,6 @@ class StacApiIO(DefaultStacIO):
             request = Request(method=method, url=href, headers=headers, json=parameters)
         else:
             params = deepcopy(parameters) or {}
-            if "intersects" in params:
-                params["intersects"] = json.dumps(params["intersects"])
             request = Request(method="GET", url=href, headers=headers, params=params)
         try:
             modified = self._req_modifier(request) if self._req_modifier else None
@@ -144,9 +206,12 @@ class StacApiIO(DefaultStacIO):
             msg = f"{prepped.method} {prepped.url} Headers: {prepped.headers}"
             if method == "POST":
                 msg += f" Payload: {json.dumps(request.json)}"
+            if self.timeout is not None:
+                msg += f" Timeout: {self.timeout}"
             logger.debug(msg)
-            resp = self.session.send(prepped)
+            resp = self.session.send(prepped, timeout=self.timeout)
         except Exception as err:
+            logger.debug(err)
             raise APIError(str(err))
         if resp.status_code != 200:
             raise APIError.from_response(resp)
@@ -156,7 +221,7 @@ class StacApiIO(DefaultStacIO):
             raise APIError(str(err))
 
     def write_text_to_href(self, href: str, *args: Any, **kwargs: Any) -> None:
-        if bool(urlparse(href).scheme):
+        if _is_url(href):
             raise APIError("Transactions not supported")
         else:
             return super().write_text_to_href(href, *args, **kwargs)
@@ -168,7 +233,8 @@ class StacApiIO(DefaultStacIO):
         root: Optional["Catalog_Type"] = None,
         preserve_dict: bool = True,
     ) -> "STACObject_Type":
-        """Deserializes a :class:`~pystac.STACObject` sub-class instance from a dictionary.
+        """Deserializes a :class:`~pystac.STACObject` sub-class instance from a
+        dictionary.
 
         Args:
             d : The dictionary to deserialize
@@ -226,6 +292,8 @@ class StacApiIO(DefaultStacIO):
             Dict[str, Any] : JSON content from a single page
         """
         page = self.read_json(url, method=method, parameters=parameters)
+        if not (page.get("features") or page.get("collections")):
+            return None
         yield page
 
         next_link = next(
@@ -234,6 +302,8 @@ class StacApiIO(DefaultStacIO):
         while next_link:
             link = Link.from_dict(next_link)
             page = self.read_json(link, parameters=parameters)
+            if not (page.get("features") or page.get("collections")):
+                return None
             yield page
 
             # get the next link and make the next request
@@ -241,50 +311,7 @@ class StacApiIO(DefaultStacIO):
                 (link for link in page.get("links", []) if link["rel"] == "next"), None
             )
 
-    def assert_conforms_to(self, conformance_class: ConformanceClasses) -> None:
-        """Raises a :exc:`NotImplementedError` if the API does not publish the given
-        conformance class. This method only checks against the ``"conformsTo"``
-        property from the API landing page and does not make any additional
-        calls to a ``/conformance`` endpoint even if the API provides such an endpoint.
 
-        Args:
-            conformance_class: The ``ConformanceClasses`` key to check conformance
-            against.
-        """
-        if not self.conforms_to(conformance_class):
-            raise NotImplementedError(f"{conformance_class} not supported")
-
-    def conforms_to(self, conformance_class: ConformanceClasses) -> bool:
-        """Whether the API conforms to the given standard. This method only checks
-        against the ``"conformsTo"`` property from the API landing page and does not
-        make any additional calls to a ``/conformance`` endpoint even if the API
-        provides such an endpoint.
-
-        Args:
-            conformance_class : The ``ConformanceClasses`` key to check conformance
-                against.
-
-        Return:
-            bool: Indicates if the API conforms to the given spec or URI.
-        """
-
-        # Conformance of None means ignore all conformance as opposed to an
-        #  empty array which would indicate the API conforms to nothing
-        if self._conformance is None:
-            return True
-
-        class_regex = CONFORMANCE_URIS.get(conformance_class.name, None)
-
-        if class_regex is None:
-            raise Exception(f"Invalid conformance class {conformance_class}")
-
-        pattern = re.compile(class_regex)
-
-        if not any(re.match(pattern, uri) for uri in self._conformance):
-            return False
-
-        return True
-
-    def set_conformance(self, conformance: Optional[List[str]]) -> None:
-        """Sets (or clears) the conformance classes for this StacIO."""
-        self._conformance = conformance
+def _is_url(href: str) -> bool:
+    url = urlparse(href)
+    return bool(url.scheme) and bool(url.netloc)

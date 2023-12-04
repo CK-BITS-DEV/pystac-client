@@ -5,7 +5,6 @@ from urllib.parse import parse_qs, urlsplit
 import pytest
 from requests_mock.mocker import Mocker
 
-from pystac_client.conformance import ConformanceClasses
 from pystac_client.exceptions import APIError
 from pystac_client.stac_api_io import StacApiIO
 
@@ -13,20 +12,20 @@ from .helpers import STAC_URLS
 
 
 class TestSTAC_IOOverride:
-    @pytest.mark.vcr  # type: ignore[misc]
+    @pytest.mark.vcr
     def test_request_input(self) -> None:
         stac_api_io = StacApiIO()
         response = stac_api_io.read_text(STAC_URLS["PLANETARY-COMPUTER"])
         assert isinstance(response, str)
 
-    @pytest.mark.vcr  # type: ignore[misc]
+    @pytest.mark.vcr
     def test_str_input(self) -> None:
         stac_api_io = StacApiIO()
         response = stac_api_io.read_text(STAC_URLS["PLANETARY-COMPUTER"])
 
         assert isinstance(response, str)
 
-    @pytest.mark.vcr  # type: ignore[misc]
+    @pytest.mark.vcr
     def test_http_error(self) -> None:
         stac_api_io = StacApiIO()
         # Attempt to access an authenticated endpoint
@@ -45,30 +44,10 @@ class TestSTAC_IOOverride:
 
         assert response == "Hi there!"
 
-    def test_assert_conforms_to(self) -> None:
-        nonconformant = StacApiIO(conformance=[])
-
-        with pytest.raises(NotImplementedError):
-            nonconformant.assert_conforms_to(ConformanceClasses.CORE)
-
-        conformant_io = StacApiIO(
-            conformance=["https://api.stacspec.org/v1.0.0-beta.1/core"]
-        )
-
-        # Check that this does not raise an exception
-        conformant_io.assert_conforms_to(ConformanceClasses.CORE)
-
-    def test_conforms_to(self) -> None:
-        nonconformant = StacApiIO(conformance=[])
-
-        assert not nonconformant.conforms_to(ConformanceClasses.CORE)
-
-        conformant_io = StacApiIO(
-            conformance=["https://api.stacspec.org/v1.0.0-beta.1/core"]
-        )
-
-        # Check that this does not raise an exception
-        assert conformant_io.conforms_to(ConformanceClasses.CORE)
+    def test_conformance_deprecated(self) -> None:
+        with pytest.warns(FutureWarning, match="`conformance` option is deprecated"):
+            stac_api_io = StacApiIO(conformance=[])
+        assert not hasattr(stac_api_io, "conformance")
 
     def test_custom_headers(self, requests_mock: Mocker) -> None:
         """Checks that headers passed to the init method are added to requests."""
@@ -168,3 +147,122 @@ class TestSTAC_IOOverride:
         with open(test_file) as file:
             data = file.read()
         assert data == "Hi there!"
+
+    @pytest.mark.parametrize(
+        ("attribute", "endpoint"),
+        (("features", "search"), ("collections", "collections")),
+    )
+    def test_stop_on_empty_page(
+        self, requests_mock: Mocker, attribute: str, endpoint: str
+    ) -> None:
+        url = f"https://pystac-client.test/{endpoint}"
+        requests_mock.get(
+            url,
+            status_code=200,
+            json={
+                attribute: [{"foo": "bar"}],
+                "links": [
+                    {
+                        "rel": "next",
+                        "href": url + "?token=baz",
+                    }
+                ],
+            },
+        )
+        requests_mock.get(
+            url + "?token=baz",
+            status_code=200,
+            json={
+                attribute: [],
+                "links": [
+                    {
+                        "rel": "next",
+                        "href": url + "?token=bam",
+                    }
+                ],
+            },
+        )
+        requests_mock.get(
+            url + "?token=bam",
+            status_code=500,
+        )
+        stac_api_io = StacApiIO()
+        pages = list(stac_api_io.get_pages(url))
+        assert len(pages) == 1
+        assert pages[0][attribute][0]["foo"] == "bar"
+
+    @pytest.mark.parametrize(
+        ("attribute", "endpoint"),
+        (("features", "search"), ("collections", "collections")),
+    )
+    def test_stop_on_attributeless_page(
+        self, requests_mock: Mocker, attribute: str, endpoint: str
+    ) -> None:
+        url = f"https://pystac-client.test/{endpoint}"
+        requests_mock.get(
+            url,
+            status_code=200,
+            json={
+                attribute: [{"foo": "bar"}],
+                "links": [
+                    {
+                        "rel": "next",
+                        "href": url + "?token=baz",
+                    }
+                ],
+            },
+        )
+        requests_mock.get(
+            url + "?token=baz",
+            status_code=200,
+            json={
+                "links": [
+                    {
+                        "rel": "next",
+                        "href": url + "?token=bam",
+                    }
+                ],
+            },
+        )
+        requests_mock.get(
+            url + "?token=bam",
+            status_code=500,
+        )
+        stac_api_io = StacApiIO()
+        pages = list(stac_api_io.get_pages(url))
+        assert len(pages) == 1
+        assert pages[0][attribute][0]["foo"] == "bar"
+
+    @pytest.mark.parametrize(
+        ("attribute", "endpoint"),
+        (("features", "search"), ("collections", "collections")),
+    )
+    def test_stop_on_first_empty_page(
+        self, requests_mock: Mocker, attribute: str, endpoint: str
+    ) -> None:
+        url = f"https://pystac-client.test/{endpoint}"
+        requests_mock.get(
+            url,
+            status_code=200,
+            json={
+                attribute: [],
+                "links": [
+                    {
+                        "rel": "next",
+                        "href": url + "?token=bam",
+                    }
+                ],
+            },
+        )
+        requests_mock.get(url + "?token=bam", status_code=500)
+        stac_api_io = StacApiIO()
+        pages = list(stac_api_io.get_pages(url))
+        assert len(pages) == 0
+
+    @pytest.mark.vcr
+    def test_timeout_smoke_test(self) -> None:
+        # Testing timeout behavior is hard, so we just have a simple smoke test to make
+        # sure that providing a timeout doesn't break anything.
+        stac_api_io = StacApiIO(timeout=42)
+        response = stac_api_io.read_text(STAC_URLS["PLANETARY-COMPUTER"])
+        assert isinstance(response, str)

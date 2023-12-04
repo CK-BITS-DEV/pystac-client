@@ -63,7 +63,7 @@ extlinks = {
     )
 }
 
-nbsphinx_allow_errors = True
+nbsphinx_allow_errors = False
 
 # Add any paths that contain templates here, relative to this directory.
 templates_path = ["_templates"]
@@ -103,6 +103,7 @@ html_theme_options = {
     "external_links": [
         {"name": "STAC Spec", "url": "https://github.com/radiantearth/stac-spec"}
     ],
+    "navigation_with_keys": False,
     # "navbar_end": ["navbar-icon-links.html", "search-field.html"]
 }
 

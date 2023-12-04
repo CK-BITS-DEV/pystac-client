@@ -5,27 +5,115 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/)
 and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.html).
 
-## [Unreleased] - TBD
+## [Unreleased]
+
+### Fixed
+
+- Recursion error in `get_items` [#608](https://github.com/stac-utils/pystac-client/pull/608)
+
+### Removed
+
+- Passing ``-q`` to the CLI rather than ``--query`` [#614](https://github.com/stac-utils/pystac-client/pull/614)
+
+## [v0.7.5] - 2023-09-05
+
+### Fixed
+
+- `--matched` flag in CLI [#588](https://github.com/stac-utils/pystac-client/pull/588)
+
+## [v0.7.4] - 2023-09-05
+
+### Changed
+
+- Don't provide a `limit` by default, trust the server to know its limits [#584](https://github.com/stac-utils/pystac-client/pull/584)
+
+## [v0.7.3] - 2023-08-21
+
+### Changed
+
+- Raise more informative errors from CLI [#554](https://github.com/stac-utils/pystac-client/pull/554)
+- Add `Retry` type hint to `StacApiIO` [#577](https://github.com/stac-utils/pystac-client/pull/577)
+
+### Fixed
+
+- Updated `get_items` signatures for PySTAC v1.8 [#559](https://github.com/stac-utils/pystac-client/pull/559), [#579](https://github.com/stac-utils/pystac-client/pull/579)
+
+## [v0.7.2] - 2023-06-23
+
+### Fixed
+
+- Remove troublesome assertion [#549](https://github.com/stac-utils/pystac-client/pull/549)
+
+## [v0.7.1] - 2023-06-13
+
+### Fixed
+
+- Remove unnecessary `typing_extensions` import [#541](https://github.com/stac-utils/pystac-client/pull/541)
+
+## [v0.7.0] - 2023-06-12
+
+### Added
+
+- Timeout option added to `Client.open` [#463](https://github.com/stac-utils/pystac-client/pull/463), [#538](https://github.com/stac-utils/pystac-client/pull/538)
+- Support for fetching catalog queryables [#477](https://github.com/stac-utils/pystac-client/pull/477)
+- PySTAC Client specific warnings [#480](https://github.com/stac-utils/pystac-client/pull/480)
+- Support for fetching and merging a selection of queryables [#511](https://github.com/stac-utils/pystac-client/pull/511)
+- Better error messages for the CLI [#531](https://github.com/stac-utils/pystac-client/pull/531)
+- `Modifiable` to our public API [#534](https://github.com/stac-utils/pystac-client/pull/534)
+- `max_retries` parameter to `StacApiIO` [#532](https://github.com/stac-utils/pystac-client/pull/532)
+
+### Changed
+
+- Switched to Ruff from isort/flake8 [#457](https://github.com/stac-utils/pystac-client/pull/457)
+- Move to `FutureWarning` from `DeprecationWarning` for item search interface functions that are to be removed [#464](https://github.com/stac-utils/pystac-client/pull/464)
+- Consolidate contributing docs into one place [#478](https://github.com/stac-utils/pystac-client/issues/478)
+- Use `pyproject.toml` instead of `setup.py` [#501](https://github.com/stac-utils/pystac-client/pull/501)
+- Enable Ruff import sorting [#518](https://github.com/stac-utils/pystac-client/pull/518)
+
+### Fixed
+
+- `query` parameter in GET requests [#362](https://github.com/stac-utils/pystac-client/pull/362)
+- Double encoding of `intersects` parameter in GET requests [#362](https://github.com/stac-utils/pystac-client/pull/362)
+- Fix geometry instantiation in item-search-intersects.ipynb [#484](https://github.com/stac-utils/pystac-client/pull/484)
+- Three tests that were false positives due to out-of-date cassettes [#491](https://github.com/stac-utils/pystac-client/pull/491)
+- Max items checks when paging [#492](https://github.com/stac-utils/pystac-client/pull/492)
+- `ItemSearch.url_with_parameters` no longer unquotes the url [#530](https://github.com/stac-utils/pystac-client/pull/530)
+
+### Removed
+
+- ``pystac_client.conformance.CONFORMANCE_URIS`` dictionary [#480](https://github.com/stac-utils/pystac-client/pull/480)
+
+## [v0.6.1] - 2023-03-14
+
+### Changed
+
+- Bumped PySTAC dependency to >= 1.7.0 [#449](https://github.com/stac-utils/pystac-client/pull/449)
+
+### Fixed
+
+- Fix parse fail when header has multiple '=' characters [#440](https://github.com/stac-utils/pystac-client/pull/440)
+- `Client.open` and `Client.from_file` now apply `headers`, etc to existing `stac_io` instances ([#439](https://github.com/stac-utils/pystac-client/pull/439))
+
+## [v0.6.0] - 2023-01-27
 
 ### Added
 
 - Python 3.11 support [#347](https://github.com/stac-utils/pystac-client/pull/347)
-- `request_modifier` to `StacApiIO` to allow for additional authentication mechanisms (e.g. AWS SigV4) [#371](https://github.com/stac-utils/pystac-client/issues/371)
-- *Authentication* tutorial, demonstrating how to use to the provided hooks to use both basic and AWS SigV4 authentication [#371](https://github.com/stac-utils/pystac-client/issues/371)
-
-### Changed
+- `request_modifier` to `StacApiIO` to allow for additional authentication mechanisms (e.g. AWS SigV4) [#372](https://github.com/stac-utils/pystac-client/pull/372)
+- *Authentication* tutorial, demonstrating how to use to the provided hooks to use both basic and AWS SigV4 authentication [#372](https://github.com/stac-utils/pystac-client/pull/372)
+- CI checks for Windows and MacOS [#378](https://github.com/stac-utils/pystac-client/pull/378)
+- Fallback to `STAC API - Item Search` when finding a single item in `CollectionClient` if `STAC API - Features` is not implemented [#379](https://github.com/stac-utils/pystac-client/pull/379)
 
 ### Fixed
 
+- Stop iteration on an empty page [#338](https://github.com/stac-utils/pystac-client/pull/338)
 - Some mishandled cases for datetime intervals [#363](https://github.com/stac-utils/pystac-client/pull/363)
-- Collection requests when the Client's url ends in a '/' [#373](https://github.com/stac-utils/pystac-client/pull/373)
+- Collection requests when the Client's url ends in a '/' [#373](https://github.com/stac-utils/pystac-client/pull/373), [#405](https://github.com/stac-utils/pystac-client/pull/405)
 - Parse datetimes more strictly [#364](https://github.com/stac-utils/pystac-client/pull/364)
 
 ### Removed
 
 - Python 3.7 support [#347](https://github.com/stac-utils/pystac-client/pull/347)
-
-### Deprecated
 
 ## [v0.5.1] - 2022-09-19
 
@@ -254,16 +342,24 @@ are in a single HTTP session, handle pagination and respects conformance
 
 Initial release.
 
-[Unreleased]: <https://github.com/stac-utils/pystac-client/compare/v0.5.1...main>
+[Unreleased]: <https://github.com/stac-utils/pystac-client/compare/v0.7.5...main>
+[v0.7.5]: <https://github.com/stac-utils/pystac-client/compare/v0.7.4...v0.7.5>
+[v0.7.4]: <https://github.com/stac-utils/pystac-client/compare/v0.7.3...v0.7.4>
+[v0.7.3]: <https://github.com/stac-utils/pystac-client/compare/v0.7.2...v0.7.3>
+[v0.7.2]: <https://github.com/stac-utils/pystac-client/compare/v0.7.1...v0.7.2>
+[v0.7.1]: <https://github.com/stac-utils/pystac-client/compare/v0.7.0...v0.7.1>
+[v0.7.0]: <https://github.com/stac-utils/pystac-client/compare/v0.6.1...v0.7.0>
+[v0.6.1]: <https://github.com/stac-utils/pystac-client/compare/v0.6.0...v0.6.1>
+[v0.6.0]: <https://github.com/stac-utils/pystac-client/compare/v0.5.1...v0.6.0>
 [v0.5.1]: <https://github.com/stac-utils/pystac-client/compare/v0.5.0...v0.5.1>
 [v0.5.0]: <https://github.com/stac-utils/pystac-client/compare/v0.4.0...v0.5.0>
 [v0.4.0]: <https://github.com/stac-utils/pystac-client/compare/v0.3.5...v0.4.0>
-[v0.3.5]: <https://github.com/stac-utils/pystac-client/compare/v0.3.4..v0.3.5>
-[v0.3.4]: <https://github.com/stac-utils/pystac-client/compare/v0.3.3..v0.3.4>
-[v0.3.3]: <https://github.com/stac-utils/pystac-client/compare/v0.3.2..v0.3.3>
-[v0.3.2]: <https://github.com/stac-utils/pystac-client/compare/v0.3.1..v0.3.2>
-[v0.3.1]: <https://github.com/stac-utils/pystac-client/compare/v0.3.0..v0.3.1>
-[v0.3.0]: <https://github.com/stac-utils/pystac-client/compare/v0.2.0..v0.3.0>
-[v0.2.0]: <https://github.com/stac-utils/pystac-client/compare/v0.1.1..v0.2.0>
-[v0.1.1]: <https://github.com/stac-utils/pystac-client/compare/v0.1.0..v0.1.1>
+[v0.3.5]: <https://github.com/stac-utils/pystac-client/compare/v0.3.4...v0.3.5>
+[v0.3.4]: <https://github.com/stac-utils/pystac-client/compare/v0.3.3...v0.3.4>
+[v0.3.3]: <https://github.com/stac-utils/pystac-client/compare/v0.3.2...v0.3.3>
+[v0.3.2]: <https://github.com/stac-utils/pystac-client/compare/v0.3.1...v0.3.2>
+[v0.3.1]: <https://github.com/stac-utils/pystac-client/compare/v0.3.0...v0.3.1>
+[v0.3.0]: <https://github.com/stac-utils/pystac-client/compare/v0.2.0...v0.3.0>
+[v0.2.0]: <https://github.com/stac-utils/pystac-client/compare/v0.1.1...v0.2.0>
+[v0.1.1]: <https://github.com/stac-utils/pystac-client/compare/v0.1.0...v0.1.1>
 [v0.1.0]: <https://github.com/stac-utils/pystac-client/tree/v0.1.0>

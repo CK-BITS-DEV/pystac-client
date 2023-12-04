@@ -1,6 +1,5 @@
 import json
 import re
-import urllib.parse
 import warnings
 from collections.abc import Iterable, Mapping
 from copy import deepcopy
@@ -29,6 +28,7 @@ from requests import Request
 from pystac_client._utils import Modifiable, call_modifier
 from pystac_client.conformance import ConformanceClasses
 from pystac_client.stac_api_io import StacApiIO
+from pystac_client.warnings import DoesNotConformTo
 
 if TYPE_CHECKING:
     from pystac_client import client as _client
@@ -91,10 +91,14 @@ OP_MAP = {
 
 OPS = list(OP_MAP.keys())
 
-# Previously named DEFAULT_LIMIT_AND_MAX_ITEMS
-# aliased for backwards compat
-# https://github.com/stac-utils/pystac-client/pull/273
-DEFAUL_LIMIT = DEFAULT_LIMIT_AND_MAX_ITEMS = 100
+
+def __getattr__(name: str) -> Any:
+    if name in ("DEFAUL_LIMIT", "DEFAULT_LIMIT_AND_MAX_ITEMS"):
+        warnings.warn(
+            f"{name} is deprecated and will be removed in v0.8", DeprecationWarning
+        )
+        return 100
+    raise AttributeError(f"module {__name__} has no attribute {name}")
 
 
 # from https://gist.github.com/angstwad/bf22d1822c38a92ec0a9#gistcomment-2622319
@@ -141,7 +145,7 @@ class ItemSearch:
     through the resulting STAC Items, either :meth:`ItemSearch.item_collections`,
     :meth:`ItemSearch.items`, or :meth:`ItemSearch.items_as_dicts`.
 
-    All parameters except `url``, ``method``, ``max_items``, ``stac_io``, and ``client``
+    All parameters except `url``, ``method``, ``max_items``, and ``client``
     correspond to query parameters
     described in the `STAC API - Item Search: Query Parameters Table
     <https://github.com/radiantearth/stac-api-spec/tree/master/item-search#query-parameter-table>`__
@@ -149,8 +153,7 @@ class ItemSearch:
     to those docs for details on how these parameters filter search results.
 
     Args:
-        url: The URL to the root / landing page of the STAC API
-            implementing the Item Search endpoint.
+        url: The URL to the search page of the STAC API.
         method : The HTTP method to use when making a request to the service.
             This must be either ``"GET"``, ``"POST"``, or
             ``None``. If ``None``, this will default to ``"POST"``.
@@ -173,8 +176,7 @@ class ItemSearch:
             *per page* of results. Defaults to 100.
         ids: List of one or more Item ids to filter on.
         collections: List of one or more Collection IDs or :class:`pystac.Collection`
-            instances. Only Items in one
-            of the provided Collections will be searched
+            instances.
         bbox: A list, tuple, or iterator representing a bounding box of 2D
             or 3D coordinates. Results will be filtered
             to only those intersecting the bounding box.
@@ -249,6 +251,8 @@ class ItemSearch:
             will still be signed with ``modifier``.
     """
 
+    _stac_io: StacApiIO
+
     def __init__(
         self,
         url: str,
@@ -257,7 +261,7 @@ class ItemSearch:
         max_items: Optional[int] = None,
         stac_io: Optional[StacApiIO] = None,
         client: Optional["_client.Client"] = None,
-        limit: Optional[int] = DEFAULT_LIMIT_AND_MAX_ITEMS,
+        limit: Optional[int] = None,
         ids: Optional[IDsLike] = None,
         collections: Optional[CollectionsLike] = None,
         bbox: Optional[BBoxLike] = None,
@@ -273,12 +277,12 @@ class ItemSearch:
         self.url = url
         self.client = client
 
-        if stac_io:
-            self._stac_io = stac_io
+        if client and client._stac_io is not None and stac_io is None:
+            self._stac_io = client._stac_io
+            if not client.conforms_to(ConformanceClasses.ITEM_SEARCH):
+                warnings.warn(DoesNotConformTo("ITEM_SEARCH"))
         else:
-            self._stac_io = StacApiIO()
-
-        self._assert_conforms_to(ConformanceClasses.ITEM_SEARCH)
+            self._stac_io = stac_io or StacApiIO()
 
         self._max_items = max_items
         if self._max_items is not None and limit is not None:
@@ -308,9 +312,6 @@ class ItemSearch:
             k: v for k, v in params.items() if v is not None
         }
 
-    def _assert_conforms_to(self, conformance_class: ConformanceClasses) -> None:
-        self._stac_io.assert_conforms_to(conformance_class)
-
     def get_parameters(self) -> Dict[str, Any]:
         if self.method == "POST":
             return self._parameters
@@ -328,7 +329,11 @@ class ItemSearch:
         if "collections" in params:
             params["collections"] = ",".join(params["collections"])
         if "intersects" in params:
-            params["intersects"] = json.dumps(params["intersects"])
+            params["intersects"] = json.dumps(
+                params["intersects"], separators=(",", ":")
+            )
+        if "query" in params:
+            params["query"] = json.dumps(params["query"], separators=(",", ":"))
         if "sortby" in params:
             params["sortby"] = self._sortby_dict_to_str(params["sortby"])
         if "fields" in params:
@@ -359,13 +364,14 @@ class ItemSearch:
         url = request.prepare().url
         if url is None:
             raise ValueError("Could not construct a full url")
-        return urllib.parse.unquote(url)
+        return url
 
     def _format_query(self, value: Optional[QueryLike]) -> Optional[Dict[str, Any]]:
         if value is None:
             return None
 
-        self._assert_conforms_to(ConformanceClasses.QUERY)
+        if self.client and not self.client.conforms_to(ConformanceClasses.QUERY):
+            warnings.warn(DoesNotConformTo("QUERY"))
 
         if isinstance(value, dict):
             return value
@@ -414,7 +420,8 @@ class ItemSearch:
         if value is None:
             return None
 
-        self._assert_conforms_to(ConformanceClasses.FILTER)
+        if self.client and not self.client.conforms_to(ConformanceClasses.FILTER):
+            warnings.warn(DoesNotConformTo("FILTER"))
 
         return value
 
@@ -546,19 +553,25 @@ class ItemSearch:
 
     @staticmethod
     def _format_ids(value: Optional[IDsLike]) -> Optional[IDs]:
-        if value is None:
+        if value is None or isinstance(value, (tuple, list)) and not value:
+            # We can't just check for truthiness here because of the Iterator[str] case
             return None
-
-        if isinstance(value, str):
-            return tuple(value.split(","))
-
-        return tuple(value)
+        elif isinstance(value, str):
+            # We could check for str in the first branch, but then we'd be checking
+            # for str twice #microoptimizations
+            if value:
+                return tuple(value.split(","))
+            else:
+                return None
+        else:
+            return tuple(value)
 
     def _format_sortby(self, value: Optional[SortbyLike]) -> Optional[Sortby]:
         if value is None:
             return None
 
-        self._assert_conforms_to(ConformanceClasses.SORT)
+        if self.client and not self.client.conforms_to(ConformanceClasses.SORT):
+            warnings.warn(DoesNotConformTo("SORT"))
 
         if isinstance(value, str):
             return [self._sortby_part_to_dict(part) for part in value.split(",")]
@@ -595,7 +608,8 @@ class ItemSearch:
         if value is None:
             return None
 
-        self._assert_conforms_to(ConformanceClasses.FIELDS)
+        if self.client and not self.client.conforms_to(ConformanceClasses.FIELDS):
+            warnings.warn(DoesNotConformTo("FIELDS"))
 
         if isinstance(value, str):
             return self._fields_to_dict(value.split(","))
@@ -686,16 +700,10 @@ class ItemSearch:
         Yields:
             Item : each Item matching the search criteria
         """
-        nitems = 0
-        for page in self._stac_io.get_pages(
-            self.url, self.method, self.get_parameters()
-        ):
+        for page in self.pages_as_dicts():
             for item in page.get("features", []):
-                call_modifier(self.modifier, item)
+                # already signed in pages_as_dicts
                 yield item
-                nitems += 1
-                if self._max_items and nitems >= self._max_items:
-                    return
 
     # ------------------------------------------------------------------------
     # By Page
@@ -723,11 +731,22 @@ class ItemSearch:
             criteria as a feature-collection-like dictionary.
         """
         if isinstance(self._stac_io, StacApiIO):
+            num_items = 0
             for page in self._stac_io.get_pages(
                 self.url, self.method, self.get_parameters()
             ):
                 call_modifier(self.modifier, page)
-                yield page
+                features = page.get("features", [])
+                if features:
+                    num_items += len(features)
+                    if self._max_items and num_items > self._max_items:
+                        # Slice the features down to make sure we hit max_items
+                        page["features"] = features[0 : -(num_items - self._max_items)]
+                    yield page
+                    if self._max_items and num_items >= self._max_items:
+                        return
+                else:
+                    return
 
     # ------------------------------------------------------------------------
     # Everything
@@ -763,20 +782,10 @@ class ItemSearch:
             Dict : A GeoJSON FeatureCollection
         """
         features = []
-        for page in self._stac_io.get_pages(
-            self.url, self.method, self.get_parameters()
-        ):
+        for page in self.pages_as_dicts():
             for feature in page["features"]:
                 features.append(feature)
-                if self._max_items and len(features) >= self._max_items:
-                    feature_collection = {
-                        "type": "FeatureCollection",
-                        "features": features,
-                    }
-                    call_modifier(self.modifier, feature_collection)
-                    return feature_collection
         feature_collection = {"type": "FeatureCollection", "features": features}
-        call_modifier(self.modifier, feature_collection)
         return feature_collection
 
     # Deprecated methods
@@ -793,7 +802,7 @@ class ItemSearch:
         """
         warnings.warn(
             "get_item_collections() is deprecated, use pages() instead",
-            DeprecationWarning,
+            FutureWarning,
         )
         return self.pages()
 
@@ -809,7 +818,7 @@ class ItemSearch:
         """
         warnings.warn(
             "item_collections() is deprecated, use pages() instead",
-            DeprecationWarning,
+            FutureWarning,
         )
         return self.pages()
 
@@ -824,7 +833,7 @@ class ItemSearch:
         """
         warnings.warn(
             "get_items() is deprecated, use items() instead",
-            DeprecationWarning,
+            FutureWarning,
         )
         return self.items()
 
@@ -839,7 +848,7 @@ class ItemSearch:
         """
         warnings.warn(
             "get_all_items() is deprecated, use item_collection() instead.",
-            DeprecationWarning,
+            FutureWarning,
         )
         return self.item_collection()
 
@@ -855,6 +864,6 @@ class ItemSearch:
         warnings.warn(
             "get_all_items_as_dict() is deprecated, use item_collection_as_dict() "
             "instead.",
-            DeprecationWarning,
+            FutureWarning,
         )
         return self.item_collection_as_dict()

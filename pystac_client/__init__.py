@@ -1,12 +1,13 @@
-# flake8: noqa
 __all__ = [
     "Client",
     "CollectionClient",
     "ConformanceClasses",
     "ItemSearch",
+    "Modifiable",
     "__version__",
 ]
 
+from pystac_client._utils import Modifiable
 from pystac_client.client import Client
 from pystac_client.collection_client import CollectionClient
 from pystac_client.conformance import ConformanceClasses

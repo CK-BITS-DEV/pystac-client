@@ -39,10 +39,12 @@ includes convenience methods and attributes for:
 
 * Checking conformance to various specs
 * Querying a search endpoint (if the API conforms to the STAC API - Item Search spec)
+* Getting jsonschema of queryables from `/queryables` endpoint (if the API conforms
+  to the STAC API - Filter spec)
 
 The preferred way to interact with any STAC Catalog or API is to create an
 :class:`pystac_client.Client` instance with the ``pystac_client.Client.open`` method
-on a root Catalog. This calls the :meth:`pystac.STACObject.from_file` except
+on a root Catalog. This calls the :meth:`pystac.STACObject.from_file` except it
 properly configures conformance and IO for reading from remote servers.
 
 The following code creates an instance by making a call to the Microsoft Planetary
@@ -50,10 +52,10 @@ Computer root catalog.
 
 .. code-block:: python
 
-    >>> from pystac_client.Client import Client
-    >>> api = Client.open('https://planetarycomputer.microsoft.com/api/stac/v1')
-    >>> api.title
-    'microsoft-pc'
+    >>> from pystac_client import Client
+    >>> catalog = Client.open('https://planetarycomputer.microsoft.com/api/stac/v1')
+    >>> catalog.title
+    'Microsoft Planetary Computer STAC API'
 
 Some functions, such as ``Client.search`` will throw an error if the provided
 Catalog/API does not support the required Conformance Class. In other cases,
@@ -61,15 +63,11 @@ such as ``Client.get_collections``, API endpoints will be used if the API
 conforms, otherwise it will fall back to default behavior provided by
 :class:`pystac.Catalog`.
 
-Users may optionally provide an ``ignore_conformance`` argument when opening,
-in which case pystac-client will not check for conformance and will assume
-this is a fully featured API. This can cause unusual errors to be thrown if the API
-does not in fact conform to the expected behavior.
-
-In addition to the methods and attributes inherited from :class:`pystac.Catalog`,
-this class offers more efficient methods (if used with an API) for getting collections
-and items, as well as a search capability, utilizing the
-:class:`pystac_client.ItemSearch` class.
+When a ``Client`` does not conform to a particular Conformance Class, an informative
+warning is raised. Similarly when falling back to the :class:`pystac.Catalog`
+implementation a warning is raised. You can control the behavior of these warnings
+using the standard :py:mod:`warnings` or special context managers :func:`pystac_client.warnings.strict` and
+from :func:`pystac_client.warnings.ignore`.
 
 API Conformance
 ---------------
@@ -83,53 +81,178 @@ A STAC API is a STAC Catalog that is required to advertise its capabilities in a
 `conformsTo` field and implements the `STAC API - Core` spec along with other
 optional specifications:
 
-* `STAC API - Core <https://github.com/radiantearth/stac-api-spec/tree/master/core>`__
-* `STAC API - Item Search <https://github.com/radiantearth/stac-api-spec/tree/master/item-search>`__
-   * `Fields Extension <https://github.com/radiantearth/stac-api-spec/tree/master/fragments/fields>`__
-   * `Query Extension <https://github.com/radiantearth/stac-api-spec/tree/master/fragments/query>`__
-   * `Sort Extension <https://github.com/radiantearth/stac-api-spec/tree/master/fragments/sort>`__
-   * `Context Extension <https://github.com/radiantearth/stac-api-spec/tree/master/fragments/context>`__
-   * `Filter Extension <https://github.com/radiantearth/stac-api-spec/tree/master/fragments/filter>`__
-* `STAC API - Features <https://github.com/radiantearth/stac-api-spec/tree/master/ogcapi-features>`__ (based on
+* `CORE <https://github.com/radiantearth/stac-api-spec/tree/master/core>`__
+* `ITEM_SEARCH <https://github.com/radiantearth/stac-api-spec/tree/master/item-search>`__
+   * `FIELDS <https://github.com/radiantearth/stac-api-spec/tree/master/fragments/fields>`__
+   * `QUERY <https://github.com/radiantearth/stac-api-spec/tree/master/fragments/query>`__
+   * `SORT <https://github.com/radiantearth/stac-api-spec/tree/master/fragments/sort>`__
+   * `CONTEXT <https://github.com/radiantearth/stac-api-spec/tree/master/fragments/context>`__
+   * `FILTER <https://github.com/radiantearth/stac-api-spec/tree/master/fragments/filter>`__
+* `COLLECTIONS <https://github.com/radiantearth/stac-api-spec/tree/master/collections>`__ (based on
+  the `Features Collection section of OGC APO -  Features <http://docs.opengeospatial.org/is/17-069r3/17-069r3.html#_collections_>__`)
+* `FEATURES <https://github.com/radiantearth/stac-api-spec/tree/master/ogcapi-features>`__ (based on
   `OGC API - Features <https://www.ogc.org/standards/ogcapi-features>`__)
 
 The :meth:`pystac_client.Client.conforms_to` method is used to check conformance
 against conformance classes (specs). To check an API for support for a given spec,
-pass the `conforms_to` function the :class:`ConformanceClasses` attribute as a
-parameter.
+pass the `conforms_to` function the name of a :class:`ConformanceClasses`.
 
 .. code-block:: python
 
-    >>> from pystac_client import ConformanceClasses
-    >>> api.conforms_to(ConformanceClasses.STAC_API_ITEM_SEARCH)
+    >>> catalog.conforms_to("ITEM_SEARCH")
     True
+
+If the API does not advertise conformance with a particular spec, but it does support
+it you can update `conforms_to` on the client object. For instance in `v0` of earth-search
+there are no ``"conformsTo"`` uris set at all. But they can be explicitly set:
+
+.. code-block:: python
+
+    >>> catalog = Client.open("https://earth-search.aws.element84.com/v0")
+    <stdin>:1: NoConformsTo: Server does not advertise any conformance classes.
+    >>> catalog.conforms_to("ITEM_SEARCH")
+    False
+    >>> catalog.add_conforms_to("ITEM_SEARCH")
+
+Note, updating ``"conformsTo"`` does not change what the server supports, it just
+changes PySTAC client's understanding of what the server supports.
+
+Configuring retry behavior
+--------------------------
+
+By default, **pystac-client** will retry requests that fail DNS lookup or have timeouts.
+If you'd like to configure this behavior, e.g. to retry on some ``50x`` responses, you can configure the StacApiIO's session:
+
+.. code-block:: python
+
+    from requests.adapters import HTTPAdapter
+    from urllib3 import Retry
+
+    from pystac_client import Client
+    from pystac_client.stac_api_io import StacApiIO
+
+    retry = Retry(
+        total=5, backoff_factor=1, status_forcelist=[502, 503, 504], allowed_methods=None
+    )
+    stac_api_io = StacApiIO(max_retries=retry)
+    client = Client.open(
+        "https://planetarycomputer.microsoft.com/api/stac/v1", stac_io=stac_api_io
+    )
+
+Automatically modifying results
+-------------------------------
+
+Some systems, like the `Microsoft Planetary Computer <http://planetarycomputer.microsoft.com/>`__,
+have public STAC metadata but require some `authentication <https://planetarycomputer.microsoft.com/docs/concepts/sas/>`__
+to access the actual assets.
+
+``pystac-client`` provides a ``modifier`` keyword that can automatically
+modify the STAC objects returned by the STAC API.
+
+.. code-block:: python
+
+   >>> from pystac_client import Client
+   >>> import planetary_computer, requests
+   >>> catalog = Client.open(
+   ...    'https://planetarycomputer.microsoft.com/api/stac/v1',
+   ...    modifier=planetary_computer.sign_inplace,
+   ... )
+   >>> item = next(catalog.get_collection("sentinel-2-l2a").get_all_items())
+   >>> requests.head(item.assets["B02"].href).status_code
+   200
+
+Without the modifier, we would have received a 404 error because the asset
+is in a private storage container.
+
+``pystac-client`` expects that the ``modifier`` callable modifies the result
+object in-place and returns no result. A warning is emitted if your
+``modifier`` returns a non-None result that is not the same object as the
+input.
+
+Here's an example of creating your own modifier.
+Because :py:class:`~pystac_client.Modifiable` is a union, the modifier function must handle a few different types of input objects, and care must be taken to ensure that you are modifying the input object (rather than a copy).
+Simplifying this interface is a space for future improvement.
+
+.. code-block:: python
+
+    import urllib.parse
+
+    import pystac
+
+    from pystac_client import Client, Modifiable
+
+
+    def modifier(modifiable: Modifiable) -> None:
+        if isinstance(modifiable, dict):
+            if modifiable["type"] == "FeatureCollection":
+                new_features = list()
+                for item_dict in modifiable["features"]:
+                    modifier(item_dict)
+                    new_features.append(item_dict)
+                modifiable["features"] = new_features
+            else:
+                stac_object = pystac.read_dict(modifiable)
+                modifier(stac_object)
+                modifiable.update(stac_object.to_dict())
+        else:
+            for key, asset in modifiable.assets.items():
+                url = urllib.parse.urlparse(asset.href)
+                if not url.query:
+                    asset.href = urllib.parse.urlunparse(url._replace(query="foo=bar"))
+                    modifiable.assets[key] = asset
+
+
+    client = Client.open(
+        "https://planetarycomputer.microsoft.com/api/stac/v1", modifier=modifier
+    )
+    item_search = client.search(collections=["landsat-c2-l2"], max_items=1)
+    item = next(item_search.items())
+    asset = item.assets["red"]
+    assert urllib.parse.urlparse(asset.href).query == "foo=bar"
+
+
+Using custom certificates
+-------------------------
+
+If you need to use custom certificates in your ``pystac-client`` requests, you can
+customize the :class:`StacApiIO<pystac_client.stac_api_io.StacApiIO>` instance before
+creating your :class:`Client<pystac_client.Client>`.
+
+.. code-block:: python
+
+    >>> from pystac_client.stac_api_io import StacApiIO
+    >>> from pystac_client.client import Client
+    >>> stac_api_io = StacApiIO()
+    >>> stac_api_io.session.verify = "/path/to/certfile"
+    >>> client = Client.open("https://planetarycomputer.microsoft.com/api/stac/v1", stac_io=stac_api_io)
 
 CollectionClient
 ++++++++++++++++
 
-STAC APIs may provide a curated list of catalogs and collections via their ``"links"``
-attribute. Links with a ``"rel"`` type of ``"child"`` represent catalogs or collections
-provided by the API. Since :class:`~pystac_client.Client` instances are also
-:class:`pystac.Catalog` instances, we can use the methods defined on that class to
-get collections:
+STAC APIs may optionally implement a ``/collections`` endpoint as describe in the
+`STAC API - Collections spec
+<https://github.com/radiantearth/stac-api-spec/tree/master/collections>`__. This endpoint
+allows clients to search or inspect items within a particular collection.
 
 .. code-block:: python
 
-    >>> child_links = api.get_links('child')
-    >>> len(child_links)
-    12
-    >>> first_child_link = api.get_single_link('child')
-    >>> first_child_link.resolve_stac_object(api)
-    >>> first_collection = first_child_link.target
-    >>> first_collection.title
-    'Landsat 8 C1 T1'
+    >>> catalog = Client.open('https://planetarycomputer.microsoft.com/api/stac/v1')
+    >>> collection = catalog.get_collection("sentinel-2-l2a")
+    >>> collection.title
+    'Sentinel-2 Level-2A'
 
-CollectionClient overrides the :meth:`pystac.Collection.get_items` method. PySTAC will
-get items by iterating through all children until it gets to an `item` link. If the
-`CollectionClient` instance contains an `items` link, this will instead iterate through
-items using the API endpoint instead: `/collections/<collection_id>/items`. If no such
-link is present it will fall back to the PySTAC Collection behavior.
+:class:`pystac_client.CollectionClient` overrides :meth:`pystac.Collection.get_items`.
+PySTAC will get items by iterating through all children until it gets to an ``item`` link.
+PySTAC client will use the API endpoint instead: `/collections/<collection_id>/items`
+(as long as `STAC API - Item Search spec
+<https://github.com/radiantearth/stac-api-spec/tree/master/item-search>`__ is supported).
 
+.. code-block:: python
+
+    >>> item = next(collection.get_items(), None)
+
+Note that calling list on this iterator will take a really long time since it will be retrieving
+every itme for the whole ``"sentinel-2-l2a"`` collection.
 
 ItemSearch
 ++++++++++
@@ -149,8 +272,8 @@ requests to a service's "search" endpoint. This method returns a
 .. code-block:: python
 
     >>> from pystac_client import Client
-    >>> api = Client.open('https://planetarycomputer.microsoft.com/api/stac/v1')
-    >>> results = api.search(
+    >>> catalog = Client.open('https://planetarycomputer.microsoft.com/api/stac/v1')
+    >>> results = catalog.search(
     ...     max_items=5
     ...     bbox=[-73.21, 43.99, -73.12, 44.05],
     ...     datetime=['2019-01-01T00:00:00Z', '2019-01-02T00:00:00Z'],
@@ -293,32 +416,44 @@ descending sort and a ``+`` prefix or no prefix means an ascending sort.
             ]
     ... )
 
-Automatically modifying results
--------------------------------
+Loading data
+++++++++++++
 
-Some systems, like the `Microsoft Planetary Computer <http://planetarycomputer.microsoft.com/>`__,
-have public STAC metadata but require some `authentication <https://planetarycomputer.microsoft.com/docs/concepts/sas/>`__
-to access the actual assets.
+Once you've fetched your STAC :class:`Items<pystac.Item>` with ``pystac-client``, you
+now can work with the data referenced by your :class:`Assets<pystac.Asset>`.  This is
+out of scope for ``pystac-client``, but there's a wide variety of tools and options
+available, and the correct choices depend on your type of data, your environment, and
+the type of analysis you're doing.
 
-``pystac-client`` provides a ``modifier`` keyword that can automatically
-modify the STAC objects returned by the STAC API.
+For simple workflows, it can be easiest to load data directly using `rasterio
+<https://rasterio.readthedocs.io>`_, `fiona <https://fiona.readthedocs.io/>`_, and
+similar tools. Here is a simple example using **rasterio** to display data from a raster
+file.
 
 .. code-block:: python
 
-   >>> from pystac_client import Client
-   >>> import planetary_computer, requests
-   >>> api = Client.open(
-   ...    'https://planetarycomputer.microsoft.com/api/stac/v1',
-   ...    modifier=planetary_computer.sign_inplace,
-   ... )
-   >>> item = next(catalog.get_collection("sentinel-2-l2a").get_all_items())
-   >>> requests.head(item.assets["B02"].href).status_code
-   200
+    >>> import rasterio.plot.show
+    >>> with rasterio.open(item.assets["data"].href) as dataset:
+    ...     rasterio.plot.show(dataset)
 
-Without the modifier, we would have received a 404 error because the asset
-is in a private storage container.
+For larger sets of data and more complex workflows, a common tool for working with a
+large number of raster files is `xarray <https://docs.xarray.dev>`_, which provides data
+structures for labelled multi-dimensional arrays. `stackstac
+<https://stackstac.readthedocs.io>`_ and `odc-stac <https://odc-stac.readthedocs.io>`_
+are two similar tools that can load asset data from :class:`Items<pystac.Item>` or an
+:class:`ItemCollection<pystac.ItemCollection>` into an **xarray**. Here's a simple
+example from **odc-stac**'s documentation:
 
-``pystac-client`` expects that the ``modifier`` callable modifies the result
-object in-place and returns no result. A warning is emitted if your
-``modifier`` returns a non-None result that is not the same object as the
-input.
+.. code-block:: python
+
+    >>> catalog = pystac_client.Client.open(...)
+    >>> query = catalog.search(...)
+    >>> xx = odc.stac.load(
+    ...     query.get_items(),
+    ...     bands=["red", "green", "blue"],
+    ...     resolution=100,
+    ... )
+    >>> xx.red.plot.imshow(col="time")
+
+
+See each packages's respective documentation for more examples and tutorials.
